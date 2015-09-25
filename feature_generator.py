@@ -4,6 +4,11 @@ import numpy as np
 from sklearn.svm import LinearSVC
 from sklearn.feature_selection import RFE
 from sklearn.svm import SVR
+from sklearn import svm
+from sklearn.metrics import roc_curve, auc
+from sklearn.cross_validation import StratifiedKFold
+
+
 
 
 train = 'train.csv'
@@ -25,7 +30,7 @@ num_col_with_na = [6, 7, 13, 14, 15, 16, 17, 33, 34, 35, 36, 37, 45, 46, 47, 48,
 
 def gen_data(input_file, output_file):
     reader = csv.reader(open(input_file), delimiter=',')
-    writer = csv.writer(open(output_file,'w'), delimiter=',')
+    writer = csv.writer(open(output_file, 'w'), delimiter=',')
     delete_idx = sorted(use_less + char_col + time_col + weird_int+hash_dict.keys(), reverse=True)
     x = []
     y = []
@@ -45,9 +50,12 @@ def gen_data(input_file, output_file):
         data = data[1:]
         #data = map(float, data)
         writer.writerow(data)
+    writer.close()
     #pickle.dump(x, 'all_x.pkl')
     #pickle.dump(y, 'all_y.pkl')
-def feature_selection(input_file='train_out.csv'):
+def feature_selection(input_file='train_out.csv',
+                      limit_number=40000,
+                      fs_pkl='feature_selection.pkl'):
     reader = csv.reader(open(input_file), delimiter=',')
     count = 0
     x = []
@@ -58,12 +66,47 @@ def feature_selection(input_file='train_out.csv'):
         x.append(xi)
         y.append(yi)
         count += 1
-        if count == 10000:
+        print count
+        if count == 40000:
             break
 
     x = np.array(x)
     y = np.array(y)
-    estimator = SVR(kernel="linear")
-    selector = RFE(estimator,0.3, step=0.3,verbose=1)
-    selector = selector.fit(x, y)
-    return selector.support_
+    if not fs_pkl:
+        fs = LinearSVC(C=0.01, penalty="l1", dual=False,verbose=2)
+        x_new = fs.fit_transform(x, y)
+        pickle.dump(fs, open('feature_selection.pkl','wb'))
+    else:
+        fs = pickle.load(open(fs_pkl))
+        x_new = fs.fit_transform(x, y)
+
+    #estimator = SVR(kernel="linear")
+    #selector = RFE(estimator,0.3, step=0.3,verbose=2)
+    #selector = selector.fit(x, y)
+    return x_new
+def train(x, y):
+    fs = pickle.load(open('feature_selection.pkl'))
+    x_new = fs.transform(x)
+
+    cv = StratifiedKFold(y, n_folds=6)
+    cf = svm.SVC(kernel='linear', probability=True, random_state=0)
+    mean_tpr = 0.0
+    mean_fpr = np.linspace(0, 1, 100)
+    all_tpr = []
+    for i, (train, test) in enumerate(cv):
+        probas_ = cf.fit(x_new[train], y[train]).predict_proba(x_new[test])
+        # Compute ROC curve and area the curve
+        fpr, tpr, thresholds = roc_curve(y[test], probas_[:, 1])
+        mean_tpr += interp(mean_fpr, fpr, tpr)
+        mean_tpr[0] = 0.0
+        roc_auc = auc(fpr, tpr)
+        print 'ROC fold %d (area = %0.2f)' % (i, roc_auc)
+
+    mean_tpr /= len(cv)
+    mean_tpr[-1] = 1.0
+    mean_auc = auc(mean_fpr, mean_tpr)
+    print 'Mean ROC (area = %0.2f)' % mean_auc
+#memmap
+#github.com/dmlc/xgboost
+
+#ceras
